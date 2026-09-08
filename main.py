@@ -1,5 +1,5 @@
 """
-PX Bot v2.1.0 - Flat Version (No Folders)
+PX Bot v2.2.0 - Flat Version (No Folders)
 Professional Telegram Config Seller + Web Admin Panel
 Everything in one file - ready for GitHub & Railway
 """
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "px-bot-super-secret-change-me-please-32chars"
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 8000
-    VERSION: str = "2.1.0"
+    VERSION: str = "2.2.0"
 
     @property
     def admin_ids_list(self) -> List[int]:
@@ -214,12 +214,14 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
     defaults = {
         "rules": (
-            "📜 قوانین استفاده از PX Bot\n\n"
-            "۱. استفاده از سرویس فقط برای اهداف قانونی مجاز است.\n"
-            "۲. فروش مجدد یا اشتراک‌گذاری کانفیگ ممنوع است.\n"
-            "۳. در صورت تخلف، سرویس بدون بازگشت وجه قطع می‌شود.\n"
-            "۴. پشتیبانی فقط از طریق تیکت داخل ربات انجام می‌شود.\n"
-            "۵. با زدن دکمه «پذیرش قوانین» موافقت خود را اعلام می‌کنید."
+            "📜 قوانین استفاده از PX Bot\n"
+            "۱. ✅ استفاده از سرویس فقط برای اهداف قانونی مجاز است.\n"
+            "۲. 🚫 فروش مجدد کانفیگ ممنوع است.\n"
+            "۳. ⚠️ در صورت تخلف، سرویس بدون بازگشت وجه قطع می‌شود.\n"
+            "۴. 💬 پشتیبانی فقط از طریق تیکت داخل ربات انجام می‌شود.\n"
+            "۵. 🔐 با زدن دکمه «پذیرش قوانین» موافقت خود را اعلام می‌کنید.\n"
+            "📌 رعایت قوانین برای همه کاربران الزامی است.\n"
+            "❤️ از انتخاب شما متشکریم."
         ),
         "welcome_text": "🎉 به PX Bot خوش آمدید!\n\nسرویس فروش کانفیگ حرفه‌ای و سریع.",
         "support_text": "💬 پشتیبانی PX Bot\n\nپیام خود را بنویسید:",
@@ -228,6 +230,12 @@ async def init_db():
         "maintenance": "0",
         "maintenance_text": "",
         "brand_locked": "1",
+        "feature_test": "1",
+        "feature_support": "1",
+        "feature_reviews": "1",
+        "feature_wallet": "1",
+        "support_disabled_text": "💬 پشتیبانی فعلاً غیرفعال است.\nلطفاً بعداً مراجعه کنید.",
+        "test_disabled_text": "🧪 بخش کانفیگ تست فعلاً غیرفعال است.",
     }
     async with AsyncSessionLocal() as session:
         for key, value in defaults.items():
@@ -504,6 +512,11 @@ def admin_menu() -> InlineKeyboardMarkup:
     )
     b.row(
         _btn("🔧  حالت تعمیر", "admin_maintenance", ButtonStyle.DANGER),
+        _btn("🎛  بخش‌ها", "admin_features", ButtonStyle.PRIMARY),
+    )
+    b.row(
+        _btn("🔌  تست پنل", "admin_test_panel", ButtonStyle.SUCCESS),
+        _btn("♻️  ریست تنظیمات", "admin_reset_settings", ButtonStyle.DANGER),
     )
     b.row(_btn("🔙  بازگشت به منو", "back_main", ButtonStyle.PRIMARY))
     return b.as_markup()
@@ -587,6 +600,9 @@ class AdminStates(StatesGroup):
     add_force_channel = State()
     set_welcome = State()
     maintenance_text = State()
+    reset_confirm = State()
+    support_disabled_text = State()
+    test_panel_id = State()
 
 async def check_force_join(user_id: int, bot: Bot) -> tuple[bool, list]:
     async with AsyncSessionLocal() as session:
@@ -700,6 +716,11 @@ async def shop(callback: CallbackQuery):
 
 @router.callback_query(F.data == "test_config")
 async def test_config(callback: CallbackQuery):
+    if await get_setting("feature_test", "1") != "1":
+        txt = await get_setting("test_disabled_text", "🧪 بخش کانفیگ تست فعلاً غیرفعال است.")
+        await callback.message.edit_text(txt, reply_markup=back_button())
+        await callback.answer()
+        return
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Product).where(Product.is_active == True, Product.is_test == True).limit(5)
@@ -846,6 +867,11 @@ async def my_orders(callback: CallbackQuery):
 
 @router.callback_query(F.data == "support")
 async def support(callback: CallbackQuery, state: FSMContext):
+    if await get_setting("feature_support", "1") != "1":
+        txt = await get_setting("support_disabled_text", "💬 پشتیبانی فعلاً غیرفعال است.\nلطفاً بعداً مراجعه کنید.")
+        await callback.message.edit_text(txt, reply_markup=back_button())
+        await callback.answer()
+        return
     text = await get_setting("support_text")
     await callback.message.edit_text(text, reply_markup=back_button())
     await state.set_state(SupportStates.waiting_message)
@@ -863,6 +889,9 @@ async def support_message(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "reviews")
 async def reviews(callback: CallbackQuery):
+    if await get_setting("feature_reviews", "1") != "1":
+        await callback.answer("این بخش غیرفعال است", show_alert=True)
+        return
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Review).where(Review.is_approved == True).order_by(desc(Review.created_at)).limit(10))
         revs = result.scalars().all()
@@ -874,6 +903,9 @@ async def reviews(callback: CallbackQuery):
 
 @router.callback_query(F.data == "wallet")
 async def wallet_view(callback: CallbackQuery):
+    if await get_setting("feature_wallet", "1") != "1":
+        await callback.answer("کیف پول فعلاً غیرفعال است", show_alert=True)
+        return
     async with AsyncSessionLocal() as session:
         user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
         bal = user.balance if user else 0
@@ -1478,6 +1510,156 @@ async def maint_save_text_msg(message: Message, state: FSMContext):
     await set_setting("maintenance_text", txt)
     await message.answer("✅ متن حالت تعمیر ذخیره شد.", reply_markup=admin_menu())
     await state.clear()
+
+
+
+@router.callback_query(F.data == "admin_features")
+async def admin_features(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    async def flag(key):
+        return "🟢" if await get_setting(key, "1") == "1" else "🔴"
+    text = (
+        "🎛 مدیریت بخش‌ها\\n\\n"
+        f"{await flag('feature_test')} کانفیگ تست\\n"
+        f"{await flag('feature_support')} پشتیبانی\\n"
+        f"{await flag('feature_reviews')} نظرات\\n"
+        f"{await flag('feature_wallet')} کیف پول\\n\\n"
+        "برای تغییر وضعیت روی دکمه بزنید:"
+    )
+    b = InlineKeyboardBuilder()
+    b.row(_btn(f"{await flag('feature_test')} تست", "toggle_feature_test", ButtonStyle.PRIMARY))
+    b.row(_btn(f"{await flag('feature_support')} پشتیبانی", "toggle_feature_support", ButtonStyle.PRIMARY))
+    b.row(_btn(f"{await flag('feature_reviews')} نظرات", "toggle_feature_reviews", ButtonStyle.PRIMARY))
+    b.row(_btn(f"{await flag('feature_wallet')} کیف پول", "toggle_feature_wallet", ButtonStyle.PRIMARY))
+    b.row(_btn("✏️ متن غیرفعال پشتیبانی", "set_support_disabled_text", ButtonStyle.PRIMARY))
+    b.row(_btn("🔙 بازگشت", "admin_panel", ButtonStyle.PRIMARY))
+    await callback.message.edit_text(text, reply_markup=b.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("toggle_feature_"))
+async def toggle_feature(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    key = callback.data.replace("toggle_", "")  # feature_test etc
+    cur = await get_setting(key, "1")
+    await set_setting(key, "0" if cur == "1" else "1")
+    await callback.answer("وضعیت تغییر کرد")
+    await admin_features(callback)
+
+@router.callback_query(F.data == "set_support_disabled_text")
+async def set_support_disabled_text(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    cur = await get_setting("support_disabled_text", "")
+    await callback.message.edit_text(
+        f"متن فعلی وقتی پشتیبانی خاموش است:\\n\\n{cur}\\n\\n———\\nمتن جدید را بفرستید:",
+        reply_markup=back_button("admin_features"),
+    )
+    await state.set_state(AdminStates.support_disabled_text)
+    await callback.answer()
+
+@router.message(AdminStates.support_disabled_text)
+async def save_support_disabled_text(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await set_setting("support_disabled_text", message.text)
+    await message.answer("✅ متن ذخیره شد.", reply_markup=admin_menu())
+    await state.clear()
+
+@router.callback_query(F.data == "admin_reset_settings")
+async def admin_reset_settings(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    b = InlineKeyboardBuilder()
+    b.row(_btn("✅ بله — ریست کامل", "reset_settings_yes", ButtonStyle.DANGER))
+    b.row(_btn("❌ انصراف", "admin_panel", ButtonStyle.PRIMARY))
+    await callback.message.edit_text(
+        "♻️ بازگشت تنظیمات به حالت اول\\n\\n"
+        "قوانین، متن‌ها، پرچم بخش‌ها و حالت تعمیر ریست می‌شوند.\\n"
+        "محصولات، کاربران و سفارش‌ها پاک نمی‌شوند.\\n\\n"
+        "مطمئن هستید؟",
+        reply_markup=b.as_markup(),
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "reset_settings_yes")
+async def reset_settings_yes(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    defaults = {
+        "rules": (
+            "📜 قوانین استفاده از PX Bot\\n"
+            "۱. ✅ استفاده از سرویس فقط برای اهداف قانونی مجاز است.\\n"
+            "۲. 🚫 فروش مجدد کانفیگ ممنوع است.\\n"
+            "۳. ⚠️ در صورت تخلف، سرویس بدون بازگشت وجه قطع می‌شود.\\n"
+            "۴. 💬 پشتیبانی فقط از طریق تیکت داخل ربات انجام می‌شود.\\n"
+            "۵. 🔐 با زدن دکمه «پذیرش قوانین» موافقت خود را اعلام می‌کنید.\\n"
+            "📌 رعایت قوانین برای همه کاربران الزامی است.\\n"
+            "❤️ از انتخاب شما متشکریم."
+        ),
+        "welcome_text": "🎉 به PX Bot خوش آمدید!\\n\\nسرویس فروش کانفیگ حرفه‌ای و سریع.",
+        "support_text": "💬 پشتیبانی PX Bot\\n\\nپیام خود را بنویسید:",
+        "card_number": "",
+        "card_owner": "",
+        "maintenance": "0",
+        "maintenance_text": "",
+        "feature_test": "1",
+        "feature_support": "1",
+        "feature_reviews": "1",
+        "feature_wallet": "1",
+        "support_disabled_text": "💬 پشتیبانی فعلاً غیرفعال است.\\nلطفاً بعداً مراجعه کنید.",
+        "test_disabled_text": "🧪 بخش کانفیگ تست فعلاً غیرفعال است.",
+    }
+    for k, v in defaults.items():
+        await set_setting(k, v)
+    await callback.message.edit_text("✅ تمام تنظیمات به حالت پیش‌فرض بازگشت.", reply_markup=admin_menu())
+    await callback.answer("ریست انجام شد", show_alert=True)
+
+@router.callback_query(F.data == "admin_test_panel")
+async def admin_test_panel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    async with AsyncSessionLocal() as session:
+        panels = (await session.execute(select(Panel))).scalars().all()
+    if not panels:
+        await callback.message.edit_text("هنوز پنلی ثبت نشده.\\nاز بخش پنل‌ها یا سایت اضافه کنید.", reply_markup=back_button("admin_panel"))
+        await callback.answer()
+        return
+    b = InlineKeyboardBuilder()
+    for p in panels:
+        st = "✅" if p.last_test_ok else "⚠️"
+        b.row(_btn(f"{st} {p.name} ({p.panel_type})", f"test_panel_{p.id}", ButtonStyle.PRIMARY))
+    b.row(_btn("🔙 بازگشت", "admin_panel", ButtonStyle.PRIMARY))
+    await callback.message.edit_text("🔌 یک پنل را برای تست اتصال انتخاب کنید:", reply_markup=b.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("test_panel_"))
+async def do_test_panel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    pid = int(callback.data.split("_")[2])
+    await callback.answer("در حال تست...")
+    async with AsyncSessionLocal() as session:
+        panel = await session.get(Panel, pid)
+        if not panel:
+            await callback.answer("پنل یافت نشد", show_alert=True)
+            return
+        try:
+            inst = get_panel_instance(panel)
+            ok, msg = await inst.test_connection()
+            panel.last_test_ok = ok
+            from datetime import datetime as dt
+            panel.last_test = dt.utcnow()
+            await session.commit()
+            await inst.close()
+        except Exception as e:
+            ok, msg = False, str(e)[:120]
+    icon = "✅" if ok else "❌"
+    await callback.message.edit_text(
+        f"{icon} نتیجه تست پنل «{panel.name}»\\n\\n{msg}",
+        reply_markup=back_button("admin_test_panel"),
+    )
 
 
 # ============================================================
