@@ -1,4 +1,4 @@
-# ⚡ PX Bot v1.1.0 (Flat Version)
+# ⚡ PX Bot v1.2.0 (Flat Version)
 
 ربات فروش کانفیگ حرفه‌ای + پنل وب مینیمال  
 **همه چیز در یک فایل `main.py` — بدون هیچ فولدری**
@@ -49,4 +49,4 @@ README.md
 
 ---
 
-**PX Bot v1.1.0 — Flat · Professional · No Folders**
+**PX Bot v1.2.0 — Flat · Professional · No Folders**

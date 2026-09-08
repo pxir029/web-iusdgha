@@ -1,5 +1,5 @@
 """
-PX Bot v1.1.0 - Flat Version (No Folders)
+PX Bot v1.2.0 - Flat Version (No Folders)
 Professional Telegram Config Seller + Web Admin Panel
 Everything in one file - ready for GitHub & Railway
 """
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "px-bot-super-secret-change-me-please-32chars"
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 8000
-    VERSION: str = "1.1.0"
+    VERSION: str = "1.2.0"
 
     @property
     def admin_ids_list(self) -> List[int]:
@@ -92,6 +92,12 @@ class Settings(BaseSettings):
         return bool(self.BOT_TOKEN and self.admin_ids_list)
 
 settings = Settings()
+
+def reload_settings():
+    """Reload settings from .env (after /setup)"""
+    global settings
+    settings = Settings()
+    return settings
 START_TIME = time.time()
 
 # ============================================================
@@ -845,35 +851,125 @@ async def admin_orders(callback: CallbackQuery):
 # ============================================================
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap');
-:root{--bg:#0f1117;--card:rgba(255,255,255,0.045);--border:rgba(255,255,255,0.09);--text:#e6edf3;--muted:#8b949e;--primary:#58a6ff;--success:#3fb950;--danger:#f85149;--radius:14px}
+:root{
+  --bg:#0b0e14;
+  --bg2:#12161f;
+  --card:rgba(255,255,255,0.055);
+  --card-hover:rgba(255,255,255,0.08);
+  --border:rgba(255,255,255,0.10);
+  --border-soft:rgba(255,255,255,0.06);
+  --text:#e8edf5;
+  --muted:#8b95a8;
+  --primary:#5b9dff;
+  --success:#3ecf8e;
+  --danger:#ff5c5c;
+  --radius:18px;
+  --gap:20px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Vazirmatn',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.65;
-background-image:radial-gradient(ellipse at 15% 15%,rgba(88,166,255,0.07) 0%,transparent 45%),radial-gradient(ellipse at 85% 85%,rgba(63,185,80,0.05) 0%,transparent 45%)}
-a{color:var(--primary);text-decoration:none}.container{max-width:1080px;margin:0 auto;padding:28px 24px}
-.card{background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px}
-h1,h2{font-weight:600;margin-bottom:12px}.muted{color:var(--muted);font-size:.9rem}
-.nav{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;margin-bottom:28px;background:var(--card);backdrop-filter:blur(14px);border:1px solid var(--border);border-radius:var(--radius)}
+html{scroll-behavior:smooth}
+body{
+  font-family:'Vazirmatn',system-ui,-apple-system,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  line-height:1.7;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 10% -10%,rgba(91,157,255,0.12) 0%,transparent 55%),
+    radial-gradient(ellipse 60% 40% at 90% 110%,rgba(62,207,142,0.08) 0%,transparent 50%),
+    radial-gradient(ellipse 40% 30% at 50% 50%,rgba(255,255,255,0.02) 0%,transparent 70%);
+  background-attachment:fixed;
+}
+a{color:var(--primary);text-decoration:none}
+a:hover{opacity:0.85}
+.container{
+  max-width:1060px;
+  margin:0 auto;
+  padding:32px 28px 48px;
+}
+/* Glass cards */
+.card{
+  background:var(--card);
+  backdrop-filter:blur(20px) saturate(160%);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:28px;
+  margin-bottom:var(--gap);
+  transition:background 0.2s ease,border-color 0.2s ease;
+}
+.card:hover{background:var(--card-hover);border-color:rgba(255,255,255,0.14)}
+h1{font-size:1.65rem;font-weight:700;margin-bottom:8px;letter-spacing:-0.02em}
+h2{font-size:1.15rem;font-weight:600;margin-bottom:16px}
+.muted{color:var(--muted);font-size:0.9rem}
+/* Navbar glass */
+.nav{
+  display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;
+  padding:16px 22px;margin-bottom:28px;
+  background:rgba(255,255,255,0.05);
+  backdrop-filter:blur(24px) saturate(180%);
+  -webkit-backdrop-filter:blur(24px) saturate(180%);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+}
 .nav-links{display:flex;flex-wrap:wrap;gap:8px}
-.nav a,.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 15px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text);font-size:.9rem;cursor:pointer;text-decoration:none;font-family:inherit}
-.nav a:hover,.btn:hover{background:rgba(255,255,255,.08);text-decoration:none}
-.btn-primary{background:rgba(88,166,255,.12);border-color:rgba(88,166,255,.28);color:var(--primary)}
-.btn-success{background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.28);color:var(--success)}
-.btn-danger{background:rgba(248,81,73,.12);border-color:rgba(248,81,73,.28);color:var(--danger)}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin-bottom:24px}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;text-align:center}
-.stat .value{font-size:1.75rem;font-weight:700;color:var(--primary)}.stat .label{color:var(--muted);font-size:.84rem;margin-top:6px}
-form{display:flex;flex-direction:column;gap:14px}label{font-size:.84rem;color:var(--muted);margin-bottom:4px;display:block}
-input,textarea,select{width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:rgba(0,0,0,.28);color:var(--text);font-family:inherit;font-size:.95rem}
+.nav a,.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:9px 16px;border-radius:12px;
+  border:1px solid var(--border-soft);
+  background:rgba(255,255,255,0.04);
+  color:var(--text);font-size:0.88rem;cursor:pointer;
+  text-decoration:none;font-family:inherit;
+  transition:all 0.18s ease;
+}
+.nav a:hover,.btn:hover{background:rgba(255,255,255,0.10);border-color:var(--border);text-decoration:none}
+.btn-primary{background:rgba(91,157,255,0.14);border-color:rgba(91,157,255,0.30);color:var(--primary)}
+.btn-success{background:rgba(62,207,142,0.14);border-color:rgba(62,207,142,0.30);color:var(--success)}
+.btn-danger{background:rgba(255,92,92,0.12);border-color:rgba(255,92,92,0.28);color:var(--danger)}
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--gap);margin-bottom:var(--gap)}
+.stat{
+  background:var(--card);
+  backdrop-filter:blur(18px);
+  -webkit-backdrop-filter:blur(18px);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:24px 18px;text-align:center;
+}
+.stat .value{font-size:1.85rem;font-weight:700;color:var(--primary);letter-spacing:-0.03em}
+.stat .label{color:var(--muted);font-size:0.84rem;margin-top:8px}
+/* Forms */
+form{display:flex;flex-direction:column;gap:16px}
+label{font-size:0.84rem;color:var(--muted);margin-bottom:6px;display:block}
+input,textarea,select{
+  width:100%;padding:13px 16px;border-radius:12px;
+  border:1px solid var(--border);background:rgba(0,0,0,0.30);
+  color:var(--text);font-family:inherit;font-size:0.95rem;
+  transition:border-color 0.18s ease;
+}
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--primary)}
-textarea{min-height:120px;resize:vertical}table{width:100%;border-collapse:collapse}
-th,td{padding:12px 10px;text-align:right;border-bottom:1px solid var(--border)}th{color:var(--muted);font-weight:500;font-size:.84rem}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem}
-.badge-success{background:rgba(63,185,80,.15);color:var(--success)}.badge-danger{background:rgba(248,81,73,.15);color:var(--danger)}
-.badge-primary{background:rgba(88,166,255,.15);color:var(--primary)}
-.alert{padding:12px 16px;border-radius:10px;margin-bottom:16px;border:1px solid}
-.alert-success{background:rgba(63,185,80,.08);border-color:rgba(63,185,80,.25);color:var(--success)}
-footer{text-align:center;padding:36px 16px;color:var(--muted);font-size:.85rem}
-@media(max-width:640px){.container{padding:18px 14px}.stats{grid-template-columns:1fr 1fr}}
+textarea{min-height:130px;resize:vertical}
+/* Tables */
+table{width:100%;border-collapse:collapse}
+th,td{padding:14px 12px;text-align:right;border-bottom:1px solid var(--border-soft)}
+th{color:var(--muted);font-weight:500;font-size:0.83rem}
+/* Badges */
+.badge{display:inline-block;padding:4px 11px;border-radius:20px;font-size:0.75rem;font-weight:500}
+.badge-success{background:rgba(62,207,142,0.15);color:var(--success)}
+.badge-danger{background:rgba(255,92,92,0.15);color:var(--danger)}
+.badge-primary{background:rgba(91,157,255,0.15);color:var(--primary)}
+/* Alerts */
+.alert{padding:14px 18px;border-radius:12px;margin-bottom:18px;border:1px solid}
+.alert-success{background:rgba(62,207,142,0.08);border-color:rgba(62,207,142,0.25);color:var(--success)}
+footer{text-align:center;padding:40px 16px 20px;color:var(--muted);font-size:0.85rem}
+/* Spacing utilities */
+.mb-0{margin-bottom:0}.mb-1{margin-bottom:8px}.mb-2{margin-bottom:16px}.mb-3{margin-bottom:24px}
+@media(max-width:640px){
+  .container{padding:20px 16px 36px}
+  .card{padding:20px}
+  .nav{padding:14px 16px}
+  .stats{grid-template-columns:1fr 1fr;gap:14px}
+}
 """
 
 def render_page(title: str, body: str, version: str = "1.0.0", show_nav: bool = True) -> str:
@@ -945,6 +1041,8 @@ async def setup_submit(request: Request, bot_token: str = Form(...), admin_ids: 
     )
     request.session["setup_done"] = True
     request.session["admin"] = True
+    reload_settings()
+    logger.info("Setup complete — BOT_TOKEN loaded, bot will start shortly")
     return RedirectResponse("/dashboard?setup=1", status_code=303)
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1219,16 +1317,26 @@ async def add_forcejoin(request: Request, channel_id: str = Form(...), channel_t
 # START
 # ============================================================
 async def run_bot():
-    if not settings.BOT_TOKEN:
-        logger.warning("BOT_TOKEN not set — configure via /setup")
-        while True:
-            await asyncio.sleep(3600)
-        return
+    """Start bot with polling. Waits until BOT_TOKEN is available (after /setup)."""
+    while True:
+        reload_settings()
+        if settings.BOT_TOKEN:
+            break
+        logger.warning("BOT_TOKEN not set — waiting... configure via /setup then restart or wait")
+        await asyncio.sleep(8)
+
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_router(router)
-    logger.info("PX Bot v%s starting | Admins: %s", settings.VERSION, settings.admin_ids_list)
-    await dp.start_polling(bot)
+    logger.info("PX Bot v%s starting (polling) | Admins: %s", settings.VERSION, settings.admin_ids_list)
+    try:
+        # Delete webhook if any (important for polling)
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error("Bot error: %s", e)
+        await asyncio.sleep(5)
+        raise
 
 async def run_web():
     port = int(os.environ.get("PORT", settings.WEB_PORT))
