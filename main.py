@@ -1,5 +1,5 @@
 """
-PX Bot v2.0.0 - Flat Version (No Folders)
+PX Bot v2.1.0 - Flat Version (No Folders)
 Professional Telegram Config Seller + Web Admin Panel
 Everything in one file - ready for GitHub & Railway
 """
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "px-bot-super-secret-change-me-please-32chars"
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 8000
-    VERSION: str = "2.0.0"
+    VERSION: str = "2.1.0"
 
     @property
     def admin_ids_list(self) -> List[int]:
@@ -95,11 +95,17 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Branding is locked — cannot be changed by anyone
+BRAND_NAME = "PX Bot"
+BRAND_LOCKED = True
+
 def reload_settings():
     """Reload settings from .env (after /setup)"""
     global settings
     settings = Settings()
     return settings
+
+# Branding is locked — cannot be changed by anyone
 START_TIME = time.time()
 
 # ============================================================
@@ -219,6 +225,9 @@ async def init_db():
         "support_text": "💬 پشتیبانی PX Bot\n\nپیام خود را بنویسید:",
         "card_number": "",
         "card_owner": "",
+        "maintenance": "0",
+        "maintenance_text": "",
+        "brand_locked": "1",
     }
     async with AsyncSessionLocal() as session:
         for key, value in defaults.items():
@@ -310,6 +319,13 @@ def generate_card_image(card_number: str, card_owner: str) -> BytesIO:
 
 def is_admin(user_id: int) -> bool:
     return user_id in settings.admin_ids_list
+
+async def is_maintenance() -> tuple[bool, str]:
+    """Return (enabled, extra_text)"""
+    flag = await get_setting("maintenance", "0")
+    text = await get_setting("maintenance_text", "")
+    return flag == "1", text
+
 
 def create_backup() -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -451,7 +467,6 @@ def main_menu(is_admin_user: bool = False) -> InlineKeyboardMarkup:
     )
     b.row(
         _btn("📜  قوانین", "rules", ButtonStyle.PRIMARY),
-        _btn("ℹ️  درباره ربات", "about", ButtonStyle.PRIMARY),
     )
     if is_admin_user:
         b.row(_btn("🛠  پنل مدیریت", "admin_panel", ButtonStyle.DANGER))
@@ -486,6 +501,9 @@ def admin_menu() -> InlineKeyboardMarkup:
     b.row(
         _btn("⚙️  تنظیمات", "admin_settings", ButtonStyle.PRIMARY),
         _btn("📝  ویرایش قوانین", "admin_edit_rules", ButtonStyle.PRIMARY),
+    )
+    b.row(
+        _btn("🔧  حالت تعمیر", "admin_maintenance", ButtonStyle.DANGER),
     )
     b.row(_btn("🔙  بازگشت به منو", "back_main", ButtonStyle.PRIMARY))
     return b.as_markup()
@@ -568,6 +586,7 @@ class AdminStates(StatesGroup):
     restore_file = State()
     add_force_channel = State()
     set_welcome = State()
+    maintenance_text = State()
 
 async def check_force_join(user_id: int, bot: Bot) -> tuple[bool, list]:
     async with AsyncSessionLocal() as session:
@@ -600,15 +619,37 @@ async def cmd_start(message: Message, bot: Bot):
             session.add(user)
             await session.commit()
         elif user.is_banned:
-            await message.answer("🚫 حساب شما مسدود شده است.")
+            await message.answer("🚫 حساب شما مسدود شده است.\nدر صورت نیاز با پشتیبانی تماس بگیرید.")
+            return
+    # Maintenance mode (admins bypass)
+    if not is_admin(user_id):
+        m_on, m_text = await is_maintenance()
+        if m_on:
+            msg = "🔧 ربات در حال تعمیر است.\nلطفاً بعداً مراجعه کنید."
+            if m_text:
+                msg += f"\n\n{m_text}"
+            await message.answer(msg)
             return
     ok, missing = await check_force_join(user_id, bot)
     if not ok:
-        text = "🔒 برای استفاده باید در کانال‌های زیر عضو شوید:\n\n"
+        text = "🔒 برای استفاده از ربات باید در کانال‌های زیر عضو شوید:\n\n"
+        b = InlineKeyboardBuilder()
         for ch in missing:
-            text += f"• {ch.channel_title or ch.channel_id}\n"
-        text += "\nبعد از عضویت دوباره /start بزنید."
-        await message.answer(text)
+            title = ch.channel_title or ch.channel_id
+            text += f"• {title}\n"
+            # Build invite/link button
+            cid = ch.channel_id.strip()
+            if cid.startswith("@"):
+                url = f"https://t.me/{cid[1:]}"
+            elif cid.startswith("-100") or cid.lstrip("-").isdigit():
+                # numeric id - user should set @username preferably; fallback t.me/c/
+                url = f"https://t.me/c/{cid.replace('-100', '')}" if "-100" in cid else f"https://t.me/{cid}"
+            else:
+                url = f"https://t.me/{cid.lstrip('@')}"
+            b.row(InlineKeyboardButton(text=f"📢 عضویت در {title[:40]}", url=url, style=ButtonStyle.PRIMARY))
+        b.row(_btn("✅ عضو شدم — ادامه", "check_join_again", ButtonStyle.SUCCESS))
+        text += "\nروی دکمه زیر بزنید، عضو شوید، سپس «عضو شدم» را بزنید."
+        await message.answer(text, reply_markup=b.as_markup())
         return
     rules = await get_setting("rules")
     await message.answer(f"👋 سلام {message.from_user.first_name}!\n\n{rules}", reply_markup=confirm_rules())
@@ -633,6 +674,19 @@ async def show_rules(callback: CallbackQuery):
 
 @router.callback_query(F.data == "shop")
 async def shop(callback: CallbackQuery):
+    async with AsyncSessionLocal() as session:
+        u = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if u and u.is_banned:
+            await callback.answer("حساب شما مسدود است", show_alert=True)
+            return
+    if not is_admin(callback.from_user.id):
+        m_on, m_text = await is_maintenance()
+        if m_on:
+            msg = "🔧 ربات در حال تعمیر است."
+            if m_text:
+                msg += f"\n{m_text}"
+            await callback.answer(msg, show_alert=True)
+            return
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Product).where(Product.is_active == True, Product.is_test == False).order_by(Product.sort_order)
@@ -831,16 +885,6 @@ async def wallet_view(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=back_button())
     await callback.answer()
 
-@router.callback_query(F.data == "about")
-async def about_bot(callback: CallbackQuery):
-    text = (
-        f"⚡ <b>PX Bot v{settings.VERSION}</b>\n\n"
-        f"ربات حرفه‌ای فروش کانفیگ\n"
-        f"⏱ آپتایم: {get_uptime()}\n\n"
-        f"پشتیبانی از پنل‌های پاسارگارد · مرزبان · سنایی"
-    )
-    await callback.message.edit_text(text, reply_markup=back_button())
-    await callback.answer()
 
 @router.callback_query(F.data.startswith("pay_wallet_"))
 async def pay_from_wallet(callback: CallbackQuery, bot: Bot):
@@ -880,7 +924,7 @@ async def admin_panel(callback: CallbackQuery):
         await callback.answer("دسترسی ندارید", show_alert=True)
         return
     await callback.message.edit_text(
-        f"🛠 پنل مدیریت PX Bot v{settings.VERSION}\n⏱ آپتایم: {get_uptime()}",
+        f"🛠 پنل مدیریت PX Bot\n📦 نسخه هسته: امن",
         reply_markup=admin_menu(),
     )
     await callback.answer()
@@ -898,7 +942,7 @@ async def admin_stats(callback: CallbackQuery):
     text = (
         f"📊 آمار PX Bot\n\n👥 کاربران: {total_users}\n📦 سفارش‌ها: {total_orders}\n"
         f"✅ تایید شده: {approved}\n⏳ در انتظار: {pending}\n💰 درآمد: {format_price(revenue)}\n"
-        f"⏱ آپتایم: {get_uptime()}\n📦 نسخه: {settings.VERSION}"
+        f"📦 وضعیت سیستم: عملیاتی"
     )
     await callback.message.edit_text(text, reply_markup=back_button("admin_panel"))
     await callback.answer()
@@ -938,11 +982,26 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
         if getattr(product, "stock", -1) is not None and product.stock > 0:
             product.stock = max(0, product.stock - 1)
         await session.commit()
+    # Professional delivery message
+    duration = "نامحدود" if product.duration_days <= 0 else f"{product.duration_days} روز"
+    volume = "نامحدود" if product.data_limit_gb <= 0 else f"{product.data_limit_gb} گیگابایت"
+    delivery = (
+        f"✅ <b>سفارش شما تایید شد</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏷 <b>عنوان:</b> {product.name}\n"
+        f"📝 <b>توضیحات:</b> {product.description or '—'}\n"
+        f"⏱ <b>مدت اعتبار:</b> {duration}\n"
+        f"📊 <b>حجم:</b> {volume}\n"
+        f"👥 <b>کاربران مجاز:</b> ۱ کاربر\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🔗 <b>لینک ساب / کانفیگ:</b>\n"
+        f"<code>{order.config_data}</code>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"کد سفارش: <code>{order_id}</code>\n"
+        f"از خرید شما متشکریم ❤️"
+    )
     try:
-        await bot.send_message(
-            user.telegram_id,
-            f"✅ سفارش #{order_id} تایید شد!\n📦 {product.name}\n🔗 `{order.config_data}`",
-        )
+        await bot.send_message(user.telegram_id, delivery)
     except Exception:
         pass
     await callback.answer("تایید شد")
@@ -1349,6 +1408,75 @@ async def wallet_admin_amount(message: Message, state: FSMContext):
         await session.commit()
         new_bal = user.balance
     await message.answer(f"✅ موجودی کاربر `{tid}`: {format_price(new_bal)}", reply_markup=admin_menu())
+    await state.clear()
+
+
+
+@router.callback_query(F.data == "admin_maintenance")
+async def admin_maintenance_panel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    m_on, m_text = await is_maintenance()
+    status = "🟢 فعال — ربات برای کاربران بسته است" if m_on else "⚪ غیرفعال"
+    text = f"🔧 حالت تعمیر\n\nوضعیت: {status}\nمتن اضافی: {m_text or '—'}\n\nیک گزینه را انتخاب کنید:"
+    b = InlineKeyboardBuilder()
+    if m_on:
+        b.row(_btn("🟢 خاموش کردن تعمیر", "maint_off", ButtonStyle.SUCCESS))
+    else:
+        b.row(_btn("🔴 روشن کردن تعمیر", "maint_on", ButtonStyle.DANGER))
+    b.row(_btn("✏️ تنظیم متن تعمیر", "maint_set_text", ButtonStyle.PRIMARY))
+    b.row(_btn("🔙 بازگشت", "admin_panel", ButtonStyle.PRIMARY))
+    await callback.message.edit_text(text, reply_markup=b.as_markup())
+    await callback.answer()
+
+@router.callback_query(F.data == "maint_on")
+async def maint_on_cb(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    await set_setting("maintenance", "1")
+    await callback.answer("حالت تعمیر روشن شد", show_alert=True)
+    b = InlineKeyboardBuilder()
+    b.row(_btn("🟢 خاموش کردن تعمیر", "maint_off", ButtonStyle.SUCCESS))
+    b.row(_btn("✏️ تنظیم متن تعمیر", "maint_set_text", ButtonStyle.PRIMARY))
+    b.row(_btn("🔙 بازگشت", "admin_panel", ButtonStyle.PRIMARY))
+    await callback.message.edit_text(
+        "🔧 حالت تعمیر\n\nوضعیت: 🟢 فعال — ربات برای کاربران بسته است\n\nیک گزینه را انتخاب کنید:",
+        reply_markup=b.as_markup(),
+    )
+
+@router.callback_query(F.data == "maint_off")
+async def maint_off_cb(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    await set_setting("maintenance", "0")
+    await callback.answer("حالت تعمیر خاموش شد", show_alert=True)
+    b = InlineKeyboardBuilder()
+    b.row(_btn("🔴 روشن کردن تعمیر", "maint_on", ButtonStyle.DANGER))
+    b.row(_btn("✏️ تنظیم متن تعمیر", "maint_set_text", ButtonStyle.PRIMARY))
+    b.row(_btn("🔙 بازگشت", "admin_panel", ButtonStyle.PRIMARY))
+    await callback.message.edit_text(
+        "🔧 حالت تعمیر\n\nوضعیت: ⚪ غیرفعال\n\nیک گزینه را انتخاب کنید:",
+        reply_markup=b.as_markup(),
+    )
+
+@router.callback_query(F.data == "maint_set_text")
+async def maint_set_text_cb(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text(
+        "متن اضافی حالت تعمیر را بفرستید:\nبرای پاک کردن متن فقط این علامت را بفرستید:\n-",
+        reply_markup=back_button("admin_maintenance"),
+    )
+    await state.set_state(AdminStates.maintenance_text)
+    await callback.answer()
+
+@router.message(AdminStates.maintenance_text)
+async def maint_save_text_msg(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    txt = "" if message.text.strip() == "-" else message.text.strip()
+    await set_setting("maintenance_text", txt)
+    await message.answer("✅ متن حالت تعمیر ذخیره شد.", reply_markup=admin_menu())
     await state.clear()
 
 
