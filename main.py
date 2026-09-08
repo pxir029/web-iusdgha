@@ -1,5 +1,5 @@
 """
-PX Bot v2.2.0 - Flat Version (No Folders)
+PX Bot v2.3.0 - Flat Version (No Folders)
 Professional Telegram Config Seller + Web Admin Panel
 Everything in one file - ready for GitHub & Railway
 """
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "px-bot-super-secret-change-me-please-32chars"
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 8000
-    VERSION: str = "2.2.0"
+    VERSION: str = "2.3.0"
 
     @property
     def admin_ids_list(self) -> List[int]:
@@ -484,6 +484,7 @@ def admin_menu() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
         _btn("📊  آمار کلی", "admin_stats", ButtonStyle.PRIMARY),
+        _btn("📅  گزارش امروز", "admin_daily_report", ButtonStyle.PRIMARY),
         _btn("👥  کاربران", "admin_users", ButtonStyle.PRIMARY),
     )
     b.row(
@@ -601,6 +602,8 @@ class AdminStates(StatesGroup):
     set_welcome = State()
     maintenance_text = State()
     reset_confirm = State()
+    ban_reason = State()
+    reject_reason = State()
     support_disabled_text = State()
     test_panel_id = State()
 
@@ -1015,22 +1018,29 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
             product.stock = max(0, product.stock - 1)
         await session.commit()
     # Professional delivery message
+
+
     duration = "نامحدود" if product.duration_days <= 0 else f"{product.duration_days} روز"
     volume = "نامحدود" if product.data_limit_gb <= 0 else f"{product.data_limit_gb} گیگابایت"
+    desc = product.description or "—"
+    support_note = "در صورتی که کانفیگ خراب و یا هر مشکلی داشت در قسمت پشتیبانی پیام دهید."
+    link = order.config_data or "—"
+    nl = chr(10)
     delivery = (
-        f"✅ <b>سفارش شما تایید شد</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"🏷 <b>عنوان:</b> {product.name}\n"
-        f"📝 <b>توضیحات:</b> {product.description or '—'}\n"
-        f"⏱ <b>مدت اعتبار:</b> {duration}\n"
-        f"📊 <b>حجم:</b> {volume}\n"
-        f"👥 <b>کاربران مجاز:</b> ۱ کاربر\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"🔗 <b>لینک ساب / کانفیگ:</b>\n"
-        f"<code>{order.config_data}</code>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"کد سفارش: <code>{order_id}</code>\n"
-        f"از خرید شما متشکریم ❤️"
+        "✅ <b>سفارش شما تایید شد</b>" + nl +
+        "━━━━━━━━━━━━━━━━" + nl +
+        "🏷 <b>عنوان:</b> " + str(product.name) + nl + nl +
+        "📝 <b>توضیحات:</b>" + nl + str(desc) + nl + nl +
+        support_note + nl +
+        "━━━━━━━━━━━━━━━━" + nl +
+        "⏱ مدت: " + str(duration) + nl +
+        "📊 حجم: " + str(volume) + nl +
+        "👥 کاربران مجاز: ۱" + nl +
+        "━━━━━━━━━━━━━━━━" + nl +
+        "🔗 <b>لینک ساب / کانفیگ:</b>" + nl +
+        "<code>" + str(link) + "</code>" + nl +
+        "━━━━━━━━━━━━━━━━" + nl +
+        "کد سفارش: <code>" + str(order_id) + "</code>"
     )
     try:
         await bot.send_message(user.telegram_id, delivery)
@@ -1043,10 +1053,22 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
         pass
 
 @router.callback_query(F.data.startswith("reject_order_"))
-async def reject_order(callback: CallbackQuery, bot: Bot):
+async def reject_order(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
     order_id = int(callback.data.split("_")[2])
+    await state.update_data(reject_order_id=order_id)
+    await callback.message.answer(f"📝 دلیل رد سفارش #{order_id} را بنویسید:")
+    await state.set_state(AdminStates.reject_reason)
+    await callback.answer()
+
+@router.message(AdminStates.reject_reason)
+async def reject_order_reason(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    order_id = data.get("reject_order_id")
+    reason = message.text.strip()
     async with AsyncSessionLocal() as session:
         order = await session.get(Order, order_id)
         if order:
@@ -1054,14 +1076,15 @@ async def reject_order(callback: CallbackQuery, bot: Bot):
             user = await session.get(User, order.user_id)
             await session.commit()
             try:
-                await bot.send_message(user.telegram_id, f"❌ سفارش #{order_id} رد شد.")
+                await bot.send_message(
+                    user.telegram_id,
+                    f"❌ سفارش #{order_id} رد شد.\n\nدلیل: {reason}",
+                )
             except Exception:
                 pass
-    await callback.answer("رد شد")
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
+    await message.answer(f"سفارش #{order_id} رد شد.\nدلیل: {reason}", reply_markup=admin_menu())
+    await state.clear()
+
 
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
@@ -1251,36 +1274,6 @@ async def admin_stock(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=back_button("admin_panel"))
     await callback.answer()
 
-@router.callback_query(F.data == "admin_ban")
-async def admin_ban_start(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
-        return
-    await callback.message.edit_text(
-        "🚫 آیدی عددی کاربر برای مسدودسازی را بفرستید:\n(برای رفع مسدودیت /unban را بزنید)",
-        reply_markup=back_button("admin_panel"),
-    )
-    await state.set_state(AdminStates.ban_user)
-    await callback.answer()
-
-@router.message(AdminStates.ban_user)
-async def admin_ban_user(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-    try:
-        tid = int(message.text.strip())
-    except ValueError:
-        await message.answer("آیدی عددی معتبر بفرستید:")
-        return
-    async with AsyncSessionLocal() as session:
-        user = await session.scalar(select(User).where(User.telegram_id == tid))
-        if not user:
-            user = User(telegram_id=tid, full_name="Unknown", is_banned=True)
-            session.add(user)
-        else:
-            user.is_banned = True
-        await session.commit()
-    await message.answer(f"🚫 کاربر `{tid}` مسدود شد.", reply_markup=admin_menu())
-    await state.clear()
 
 @router.message(F.text == "/unban")
 async def unban_cmd(message: Message, state: FSMContext):
@@ -1420,7 +1413,7 @@ async def wallet_admin_user(message: Message, state: FSMContext):
     await state.set_state(AdminStates.wallet_amount)
 
 @router.message(AdminStates.wallet_amount)
-async def wallet_admin_amount(message: Message, state: FSMContext):
+async def wallet_admin_amount(message: Message, state: FSMContext, bot: Bot):
     if not is_admin(message.from_user.id):
         return
     try:
@@ -1439,7 +1432,15 @@ async def wallet_admin_amount(message: Message, state: FSMContext):
         user.balance = (user.balance or 0) + amount
         await session.commit()
         new_bal = user.balance
-    await message.answer(f"✅ موجودی کاربر `{tid}`: {format_price(new_bal)}", reply_markup=admin_menu())
+    if amount >= 0:
+        note = f"💰 کیف پول شما شارژ شد.\nمبلغ: {format_price(amount)}\nموجودی جدید: {format_price(new_bal)}"
+    else:
+        note = f"💸 از کیف پول شما کسر شد.\nمبلغ: {format_price(abs(amount))}\nموجودی جدید: {format_price(new_bal)}"
+    try:
+        await bot.send_message(tid, note)
+    except Exception:
+        pass
+    await message.answer(f"✅ موجودی کاربر `{tid}`: {format_price(new_bal)}\nپیام به کاربر ارسال شد.", reply_markup=admin_menu())
     await state.clear()
 
 
@@ -1567,6 +1568,8 @@ async def save_support_disabled_text(message: Message, state: FSMContext):
     await message.answer("✅ متن ذخیره شد.", reply_markup=admin_menu())
     await state.clear()
 
+
+@router.callback_query(F.data == "admin_reset_settings")
 @router.callback_query(F.data == "admin_reset_settings")
 async def admin_reset_settings(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -1574,13 +1577,14 @@ async def admin_reset_settings(callback: CallbackQuery):
     b = InlineKeyboardBuilder()
     b.row(_btn("✅ بله — ریست کامل", "reset_settings_yes", ButtonStyle.DANGER))
     b.row(_btn("❌ انصراف", "admin_panel", ButtonStyle.PRIMARY))
-    await callback.message.edit_text(
-        "♻️ بازگشت تنظیمات به حالت اول\\n\\n"
-        "قوانین، متن‌ها، پرچم بخش‌ها و حالت تعمیر ریست می‌شوند.\\n"
-        "محصولات، کاربران و سفارش‌ها پاک نمی‌شوند.\\n\\n"
-        "مطمئن هستید؟",
-        reply_markup=b.as_markup(),
+    nl = chr(10)
+    text = (
+        "♻️ بازگشت تنظیمات به حالت اول" + nl + nl +
+        "قوانین، متن‌ها، پرچم بخش‌ها و حالت تعمیر ریست می‌شوند." + nl +
+        "محصولات، کاربران و سفارش‌ها پاک نمی‌شوند." + nl + nl +
+        "مطمئن هستید؟"
     )
+    await callback.message.edit_text(text, reply_markup=b.as_markup())
     await callback.answer()
 
 @router.callback_query(F.data == "reset_settings_yes")
@@ -1662,148 +1666,146 @@ async def do_test_panel(callback: CallbackQuery):
     )
 
 
+
+@router.callback_query(F.data == "admin_ban")
+async def admin_ban_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text(
+        "🚫 آیدی عددی کاربر برای مسدودسازی را بفرستید:\n(رفع مسدودیت: /unban)",
+        reply_markup=back_button("admin_panel"),
+    )
+    await state.set_state(AdminStates.ban_user)
+    await callback.answer()
+
+@router.message(AdminStates.ban_user)
+async def admin_ban_user(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        tid = int(message.text.strip())
+    except ValueError:
+        await message.answer("آیدی عددی معتبر بفرستید:")
+        return
+    await state.update_data(ban_tid=tid)
+    await message.answer("📝 دلیل مسدودسازی را بنویسید:")
+    await state.set_state(AdminStates.ban_reason)
+
+@router.message(AdminStates.ban_reason)
+async def admin_ban_reason(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    tid = data.get("ban_tid")
+    reason = message.text.strip()
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == tid))
+        if not user:
+            user = User(telegram_id=tid, full_name="Unknown", is_banned=True)
+            session.add(user)
+        else:
+            user.is_banned = True
+        await session.commit()
+    try:
+        await bot.send_message(tid, f"🚫 حساب شما مسدود شد.\n\nدلیل: {reason}")
+    except Exception:
+        pass
+    await message.answer(f"🚫 کاربر `{tid}` مسدود شد.\nدلیل: {reason}", reply_markup=admin_menu())
+    await state.clear()
+
 # ============================================================
 # WEB PANEL (FastAPI) - No Shadow CSS
 # ============================================================
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap');
 :root{
-  --bg:#0b0e14;
-  --bg2:#12161f;
-  --card:rgba(255,255,255,0.055);
-  --card-hover:rgba(255,255,255,0.08);
-  --border:rgba(255,255,255,0.10);
-  --border-soft:rgba(255,255,255,0.06);
-  --text:#e8edf5;
-  --muted:#8b95a8;
-  --primary:#5b9dff;
-  --success:#3ecf8e;
-  --danger:#ff5c5c;
-  --radius:18px;
-  --gap:20px;
+  --bg:#0a0d14;--sidebar:#0e1219;--card:rgba(255,255,255,0.05);--border:rgba(255,255,255,0.09);
+  --text:#e8edf5;--muted:#8b95a8;--primary:#5b9dff;--success:#3ecf8e;--danger:#ff5c5c;--radius:16px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{
-  font-family:'Vazirmatn',system-ui,-apple-system,sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  min-height:100vh;
-  line-height:1.7;
-  background-image:
-    radial-gradient(ellipse 80% 50% at 10% -10%,rgba(91,157,255,0.12) 0%,transparent 55%),
-    radial-gradient(ellipse 60% 40% at 90% 110%,rgba(62,207,142,0.08) 0%,transparent 50%),
-    radial-gradient(ellipse 40% 30% at 50% 50%,rgba(255,255,255,0.02) 0%,transparent 70%);
-  background-attachment:fixed;
-}
+body{font-family:'Vazirmatn',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.7;
+background-image:radial-gradient(ellipse 70% 45% at 15% 0%,rgba(91,157,255,0.1) 0%,transparent 55%),
+radial-gradient(ellipse 50% 35% at 90% 100%,rgba(62,207,142,0.07) 0%,transparent 50%);background-attachment:fixed}
 a{color:var(--primary);text-decoration:none}
-a:hover{opacity:0.85}
-.container{
-  max-width:1060px;
-  margin:0 auto;
-  padding:32px 28px 48px;
+.layout{display:flex;min-height:100vh;flex-direction:row-reverse}
+.sidebar{
+  width:240px;min-height:100vh;background:rgba(14,18,25,0.92);
+  backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);
+  border-left:1px solid var(--border);padding:28px 18px;position:sticky;top:0;align-self:flex-start;
 }
-/* Glass cards */
+.sidebar .brand{font-weight:700;font-size:1.15rem;margin-bottom:28px;padding:0 8px;letter-spacing:-0.02em}
+.sidebar .brand span{color:var(--muted);font-size:0.8rem;font-weight:400;display:block;margin-top:4px}
+.sidebar nav{display:flex;flex-direction:column;gap:6px}
+.sidebar a{
+  display:block;padding:11px 14px;border-radius:12px;color:var(--text);font-size:0.9rem;
+  border:1px solid transparent;transition:all .18s;
+}
+.sidebar a:hover,.sidebar a.active{background:var(--card);border-color:var(--border);text-decoration:none}
+.main{flex:1;padding:32px 36px 48px;max-width:980px}
 .card{
-  background:var(--card);
-  backdrop-filter:blur(20px) saturate(160%);
-  -webkit-backdrop-filter:blur(20px) saturate(160%);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  padding:28px;
-  margin-bottom:var(--gap);
-  transition:background 0.2s ease,border-color 0.2s ease;
+  background:var(--card);backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);
+  border:1px solid var(--border);border-radius:var(--radius);padding:26px;margin-bottom:20px;
 }
-.card:hover{background:var(--card-hover);border-color:rgba(255,255,255,0.14)}
-h1{font-size:1.65rem;font-weight:700;margin-bottom:8px;letter-spacing:-0.02em}
-h2{font-size:1.15rem;font-weight:600;margin-bottom:16px}
-.muted{color:var(--muted);font-size:0.9rem}
-/* Navbar glass */
-.nav{
-  display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;
-  padding:16px 22px;margin-bottom:28px;
-  background:rgba(255,255,255,0.05);
-  backdrop-filter:blur(24px) saturate(180%);
-  -webkit-backdrop-filter:blur(24px) saturate(180%);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
+h1{font-size:1.55rem;font-weight:700;margin-bottom:8px}h2{font-size:1.1rem;font-weight:600;margin-bottom:14px}
+.muted{color:var(--muted);font-size:.9rem}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:12px;
+  border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);
+  font-size:.88rem;cursor:pointer;font-family:inherit;text-decoration:none;transition:all .18s;
 }
-.nav-links{display:flex;flex-wrap:wrap;gap:8px}
-.nav a,.btn{
-  display:inline-flex;align-items:center;gap:6px;
-  padding:9px 16px;border-radius:12px;
-  border:1px solid var(--border-soft);
-  background:rgba(255,255,255,0.04);
-  color:var(--text);font-size:0.88rem;cursor:pointer;
-  text-decoration:none;font-family:inherit;
-  transition:all 0.18s ease;
-}
-.nav a:hover,.btn:hover{background:rgba(255,255,255,0.10);border-color:var(--border);text-decoration:none}
-.btn-primary{background:rgba(91,157,255,0.14);border-color:rgba(91,157,255,0.30);color:var(--primary)}
-.btn-success{background:rgba(62,207,142,0.14);border-color:rgba(62,207,142,0.30);color:var(--success)}
-.btn-danger{background:rgba(255,92,92,0.12);border-color:rgba(255,92,92,0.28);color:var(--danger)}
-/* Stats */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--gap);margin-bottom:var(--gap)}
-.stat{
-  background:var(--card);
-  backdrop-filter:blur(18px);
-  -webkit-backdrop-filter:blur(18px);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  padding:24px 18px;text-align:center;
-}
-.stat .value{font-size:1.85rem;font-weight:700;color:var(--primary);letter-spacing:-0.03em}
-.stat .label{color:var(--muted);font-size:0.84rem;margin-top:8px}
-/* Forms */
-form{display:flex;flex-direction:column;gap:16px}
-label{font-size:0.84rem;color:var(--muted);margin-bottom:6px;display:block}
+.btn:hover{background:rgba(255,255,255,.09);text-decoration:none}
+.btn-primary{background:rgba(91,157,255,.14);border-color:rgba(91,157,255,.3);color:var(--primary)}
+.btn-success{background:rgba(62,207,142,.14);border-color:rgba(62,207,142,.3);color:var(--success)}
+.btn-danger{background:rgba(255,92,92,.12);border-color:rgba(255,92,92,.28);color:var(--danger)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px 16px;text-align:center}
+.stat .value{font-size:1.75rem;font-weight:700;color:var(--primary)}.stat .label{color:var(--muted);font-size:.84rem;margin-top:6px}
+form{display:flex;flex-direction:column;gap:14px}
+label{font-size:.84rem;color:var(--muted);margin-bottom:4px;display:block}
 input,textarea,select{
-  width:100%;padding:13px 16px;border-radius:12px;
-  border:1px solid var(--border);background:rgba(0,0,0,0.30);
-  color:var(--text);font-family:inherit;font-size:0.95rem;
-  transition:border-color 0.18s ease;
+  width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--border);
+  background:rgba(0,0,0,.3);color:var(--text);font-family:inherit;font-size:.95rem;
 }
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--primary)}
-textarea{min-height:130px;resize:vertical}
-/* Tables */
+textarea{min-height:120px;resize:vertical}
 table{width:100%;border-collapse:collapse}
-th,td{padding:14px 12px;text-align:right;border-bottom:1px solid var(--border-soft)}
-th{color:var(--muted);font-weight:500;font-size:0.83rem}
-/* Badges */
-.badge{display:inline-block;padding:4px 11px;border-radius:20px;font-size:0.75rem;font-weight:500}
-.badge-success{background:rgba(62,207,142,0.15);color:var(--success)}
-.badge-danger{background:rgba(255,92,92,0.15);color:var(--danger)}
-.badge-primary{background:rgba(91,157,255,0.15);color:var(--primary)}
-/* Alerts */
-.alert{padding:14px 18px;border-radius:12px;margin-bottom:18px;border:1px solid}
-.alert-success{background:rgba(62,207,142,0.08);border-color:rgba(62,207,142,0.25);color:var(--success)}
-footer{text-align:center;padding:40px 16px 20px;color:var(--muted);font-size:0.85rem}
-/* Spacing utilities */
-.mb-0{margin-bottom:0}.mb-1{margin-bottom:8px}.mb-2{margin-bottom:16px}.mb-3{margin-bottom:24px}
-@media(max-width:640px){
-  .container{padding:20px 16px 36px}
-  .card{padding:20px}
-  .nav{padding:14px 16px}
-  .stats{grid-template-columns:1fr 1fr;gap:14px}
+th,td{padding:12px 10px;text-align:right;border-bottom:1px solid rgba(255,255,255,.06)}
+th{color:var(--muted);font-weight:500;font-size:.83rem}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem}
+.badge-success{background:rgba(62,207,142,.15);color:var(--success)}
+.badge-danger{background:rgba(255,92,92,.15);color:var(--danger)}
+.badge-primary{background:rgba(91,157,255,.15);color:var(--primary)}
+.alert{padding:12px 16px;border-radius:12px;margin-bottom:16px;border:1px solid}
+.alert-success{background:rgba(62,207,142,.08);border-color:rgba(62,207,142,.25);color:var(--success)}
+footer{text-align:center;padding:28px 16px;color:var(--muted);font-size:.85rem}
+@media(max-width:800px){
+  .layout{flex-direction:column}
+  .sidebar{width:100%;position:relative;border-left:none;border-bottom:1px solid var(--border);padding:16px}
+  .sidebar nav{flex-direction:row;flex-wrap:wrap}
+  .main{padding:20px 16px 36px}
 }
 """
 
-def render_page(title: str, body: str, version: str = "1.0.0", show_nav: bool = True) -> str:
-    nav = ""
+def render_page(title: str, body: str, version: str = "2.3.0", show_nav: bool = True, active: str = "") -> str:
+    def nav_link(href, label, key):
+        cls = "active" if active == key else ""
+        return f'<a href="{href}" class="{cls}">{label}</a>'
+    sidebar = ""
     if show_nav:
-        nav = f"""
-        <nav class="nav">
-          <div style="font-weight:700">⚡ PX Bot <span class="muted">v{version}</span></div>
-          <div class="nav-links">
-            <a href="/dashboard">داشبورد</a>
-            <a href="/products">محصولات</a>
-            <a href="/panels">پنل‌ها</a>
-            <a href="/forcejoin">عضویت اجباری</a>
-            <a href="/settings">تنظیمات</a>
-            <a href="/backup">بک‌آپ</a>
-            <a href="/logout" class="btn-danger">خروج</a>
-          </div>
-        </nav>"""
+        sidebar = f"""
+        <aside class="sidebar">
+          <div class="brand">⚡ PX Bot<span>v{version}</span></div>
+          <nav>
+            {nav_link("/dashboard", "📊 داشبورد", "dashboard")}
+            {nav_link("/products", "🛍 محصولات", "products")}
+            {nav_link("/panels", "🖥 پنل‌ها", "panels")}
+            {nav_link("/forcejoin", "🔒 عضویت اجباری", "forcejoin")}
+            {nav_link("/settings", "⚙️ تنظیمات", "settings")}
+            {nav_link("/backup", "💾 بک‌آپ", "backup")}
+            {nav_link("/setup", "🚀 راه‌اندازی", "setup")}
+            {nav_link("/logout", "خروج", "logout")}
+          </nav>
+        </aside>"""
     return f"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -1812,10 +1814,12 @@ def render_page(title: str, body: str, version: str = "1.0.0", show_nav: bool = 
 <style>{CSS}</style>
 </head>
 <body>
-<div class="container">
-{nav}
+<div class="layout">
+{sidebar}
+<div class="main">
 {body}
-<footer>PX Bot v{version} · مینیمال · بدون سایه</footer>
+<footer>v{version}</footer>
+</div>
 </div>
 </body></html>"""
 
@@ -1845,7 +1849,7 @@ async def setup_page(request: Request):
         <button type="submit" class="btn btn-success">فعال‌سازی</button>
       </form>
     </div>"""
-    return HTMLResponse(render_page("فعال‌سازی", body, settings.VERSION, show_nav=False))
+    return HTMLResponse(render_page("راه‌اندازی", body, settings.VERSION, show_nav=True, active="setup"))
 
 @app.post("/setup")
 async def setup_submit(request: Request, bot_token: str = Form(...), admin_ids: str = Form(...)):
@@ -1911,7 +1915,7 @@ async def dashboard(request: Request):
     <div class="card"><h2>خوش آمدید</h2>
     <p>از منو محصولات، پنل‌ها (پاسارگارد/مرزبان/سنایی)، عضویت اجباری و بک‌آپ را مدیریت کنید.</p>
     <p class="muted" style="margin-top:12px">دکمه‌های ربات رنگی هستند · سایت بدون سایه طراحی شده.</p></div>"""
-    return HTMLResponse(render_page("داشبورد", body, settings.VERSION))
+    return HTMLResponse(render_page("داشبورد", body, settings.VERSION, active="dashboard"))
 
 @app.get("/products", response_class=HTMLResponse)
 async def products_page(request: Request):
@@ -1945,7 +1949,7 @@ async def products_page(request: Request):
     <div class="card"><h2>لیست</h2><table>
     <thead><tr><th>نام</th><th>قیمت</th><th>مدت</th><th>تست</th><th>وضعیت</th></tr></thead>
     <tbody>{rows}</tbody></table></div>"""
-    return HTMLResponse(render_page("محصولات", body, settings.VERSION))
+    return HTMLResponse(render_page("محصولات", body, settings.VERSION, active="products"))
 
 @app.post("/products/add")
 async def add_product(request: Request, name: str = Form(...), price: float = Form(...),
@@ -1994,7 +1998,7 @@ async def panels_page(request: Request):
     <div class="card"><h2>لیست</h2><table>
     <thead><tr><th>نام</th><th>نوع</th><th>آدرس</th><th>تست</th><th></th></tr></thead>
     <tbody>{rows}</tbody></table></div>"""
-    return HTMLResponse(render_page("پنل‌ها", body, settings.VERSION))
+    return HTMLResponse(render_page("پنل‌ها", body, settings.VERSION, active="panels"))
 
 @app.post("/panels/add")
 async def add_panel(request: Request, name: str = Form(...), panel_type: str = Form(...),
@@ -2045,7 +2049,7 @@ async def settings_page(request: Request):
       </div>
       <button class="btn btn-success">ذخیره</button>
     </form></div>"""
-    return HTMLResponse(render_page("تنظیمات", body, settings.VERSION))
+    return HTMLResponse(render_page("تنظیمات", body, settings.VERSION, active="settings"))
 
 @app.post("/settings")
 async def save_settings(request: Request, rules: str = Form(""), card_number: str = Form(""),
@@ -2075,7 +2079,7 @@ async def backup_page(request: Request):
       <button class="btn btn-danger" style="margin-top:10px">ریستور</button>
     </form></div>
     <div class="card"><h2>بک‌آپ‌های موجود</h2><ul style="list-style:none">{blist}</ul></div>"""
-    return HTMLResponse(render_page("بک‌آپ", body, settings.VERSION))
+    return HTMLResponse(render_page("بک‌آپ", body, settings.VERSION, active="backup"))
 
 @app.post("/backup/create")
 async def create_backup_route(request: Request):
@@ -2118,7 +2122,7 @@ async def forcejoin_page(request: Request):
     <div class="card"><h2>لیست</h2><table>
     <thead><tr><th>عنوان</th><th>آیدی</th><th>وضعیت</th></tr></thead>
     <tbody>{rows}</tbody></table></div>"""
-    return HTMLResponse(render_page("عضویت اجباری", body, settings.VERSION))
+    return HTMLResponse(render_page("عضویت اجباری", body, settings.VERSION, active="forcejoin"))
 
 @app.post("/forcejoin/add")
 async def add_forcejoin(request: Request, channel_id: str = Form(...), channel_title: str = Form("")):
@@ -2161,10 +2165,50 @@ async def run_web():
     logger.info("Web panel on http://%s:%s", settings.WEB_HOST, port)
     await server.serve()
 
+async def uptime_watchdog():
+    """Notify admins when process uptime reaches ~28 days (Railway cycle)."""
+    notified = False
+    while True:
+        try:
+            days = (time.time() - START_TIME) / 86400
+            if days >= 28 and not notified:
+                reload_settings()
+                for aid in settings.admin_ids_list:
+                    try:
+                        from aiogram import Bot as _Bot
+                        from aiogram.client.default import DefaultBotProperties as _DBP
+                        from aiogram.enums import ParseMode as _PM
+                        if not settings.BOT_TOKEN:
+                            break
+                        b = _Bot(token=settings.BOT_TOKEN, default=_DBP(parse_mode=_PM.HTML))
+                        kb = InlineKeyboardBuilder()
+                        kb.row(_btn("💾 دریافت بک‌آپ الان", "admin_backup", ButtonStyle.SUCCESS))
+                        await b.send_message(
+                            aid,
+                            "⚠️ <b>هشدار آپتایم سرور</b>\n\n"
+                            "بیش از ۲۸ روز از اجرای ربات گذشته است.\n"
+                            "حتماً از اطلاعات کاربران بک‌آپ بگیرید.",
+                        )
+                        # send with real newlines
+                        await b.send_message(
+                            aid,
+                            "⚠️ <b>هشدار آپتایم سرور</b>" + chr(10) + chr(10) +
+                            "بیش از ۲۸ روز از اجرای ربات گذشته است." + chr(10) +
+                            "حتماً از اطلاعات کاربران بک‌آپ بگیرید.",
+                            reply_markup=kb.as_markup(),
+                        )
+                        await b.session.close()
+                    except Exception as e:
+                        logger.warning("uptime notify failed: %s", e)
+                notified = True
+            await asyncio.sleep(3600)
+        except Exception:
+            await asyncio.sleep(3600)
+
 async def main():
     await init_db()
     logger.info("PX Bot v%s ready | Flat version", settings.VERSION)
-    await asyncio.gather(run_web(), run_bot())
+    await asyncio.gather(run_web(), run_bot(), uptime_watchdog())
 
 if __name__ == "__main__":
     try:
