@@ -1,5 +1,5 @@
 """
-PX Bot v1.2.0 - Flat Version (No Folders)
+PX Bot v2.0.0 - Flat Version (No Folders)
 Professional Telegram Config Seller + Web Admin Panel
 Everything in one file - ready for GitHub & Railway
 """
@@ -20,6 +20,8 @@ from typing import Optional, List, Dict, Any
 
 import httpx
 import psutil
+from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -78,7 +80,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "px-bot-super-secret-change-me-please-32chars"
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 8000
-    VERSION: str = "1.2.0"
+    VERSION: str = "2.0.0"
 
     @property
     def admin_ids_list(self) -> List[int]:
@@ -131,6 +133,7 @@ class Product(Base):
     price: Mapped[float] = mapped_column(Float)
     duration_days: Mapped[int] = mapped_column(Integer, default=30)
     data_limit_gb: Mapped[float] = mapped_column(Float, default=0)
+    stock: Mapped[int] = mapped_column(Integer, default=-1)  # -1 = unlimited
     panel_id: Mapped[Optional[int]] = mapped_column(ForeignKey("panels.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_test: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -258,6 +261,53 @@ def format_price(price: float) -> str:
 def generate_username(telegram_id: int, order_id: int) -> str:
     return f"px_{telegram_id}_{order_id}"
 
+def generate_card_image(card_number: str, card_owner: str) -> BytesIO:
+    """Generate a professional dark glass-style bank card image."""
+    w, h = 680, 400
+    img = Image.new("RGB", (w, h), (15, 18, 28))
+    draw = ImageDraw.Draw(img)
+    # gradient-like rectangles
+    for i in range(h):
+        r = int(15 + i * 0.02)
+        g = int(18 + i * 0.025)
+        b = int(28 + i * 0.04)
+        draw.line([(0, i), (w, i)], fill=(min(r,40), min(g,45), min(b,60)))
+    # outer border
+    draw.rounded_rectangle([12, 12, w-12, h-12], radius=28, outline=(90, 140, 220), width=2)
+    # inner glow line
+    draw.rounded_rectangle([20, 20, w-20, h-20], radius=24, outline=(60, 90, 140), width=1)
+    try:
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+        font_med = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+        font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
+    except Exception:
+        font_big = ImageFont.load_default()
+        font_med = font_big
+        font_sm = font_big
+    # chip
+    draw.rounded_rectangle([48, 70, 118, 120], radius=8, fill=(200, 180, 80), outline=(230, 210, 100))
+    # brand
+    draw.text((w - 180, 55), "PX PAY", font=font_med, fill=(180, 200, 255))
+    # card number
+    num = card_number or "---- ---- ---- ----"
+    # format groups of 4
+    digits = "".join(ch for ch in num if ch.isdigit() or ch == "*")
+    if len(digits) >= 16:
+        num_fmt = " ".join(digits[i:i+4] for i in range(0, 16, 4))
+    else:
+        num_fmt = num
+    draw.text((48, 180), num_fmt, font=font_big, fill=(240, 245, 255))
+    # owner
+    draw.text((48, 280), "CARD HOLDER", font=font_sm, fill=(140, 155, 180))
+    draw.text((48, 305), (card_owner or "---").upper(), font=font_med, fill=(220, 230, 255))
+    # footer
+    draw.text((w - 160, 320), "PX BOT", font=font_sm, fill=(100, 120, 160))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 def is_admin(user_id: int) -> bool:
     return user_id in settings.admin_ids_list
 
@@ -377,75 +427,117 @@ def get_panel_instance(panel: Panel) -> BasePanel:
     return cls(panel.base_url, panel.username, panel.password, panel.token)
 
 # ============================================================
-# KEYBOARDS
+# KEYBOARDS  (uniform size buttons)
 # ============================================================
+# Helper: keep button texts similar length for visual consistency
+def _btn(text: str, data: str, style=None) -> InlineKeyboardButton:
+    # pad conceptually by using consistent emoji + short labels
+    kwargs = {"style": style} if style is not None else {}
+    return InlineKeyboardButton(text=text, callback_data=data, **kwargs)
+
 def main_menu(is_admin_user: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
-        InlineKeyboardButton(text="🛒 خرید کانفیگ", callback_data="shop", style=ButtonStyle.SUCCESS),
-        InlineKeyboardButton(text="🧪 کانفیگ تست", callback_data="test_config", style=ButtonStyle.PRIMARY),
+        _btn("🛒  خرید کانفیگ", "shop", ButtonStyle.SUCCESS),
+        _btn("🧪  کانفیگ تست", "test_config", ButtonStyle.PRIMARY),
     )
     b.row(
-        InlineKeyboardButton(text="📦 سفارش‌های من", callback_data="my_orders", style=ButtonStyle.PRIMARY),
-        InlineKeyboardButton(text="💬 پشتیبانی", callback_data="support", style=ButtonStyle.PRIMARY),
+        _btn("📦  سفارش‌های من", "my_orders", ButtonStyle.PRIMARY),
+        _btn("💰  کیف پول من", "wallet", ButtonStyle.PRIMARY),
     )
     b.row(
-        InlineKeyboardButton(text="⭐ نظرات", callback_data="reviews", style=ButtonStyle.PRIMARY),
-        InlineKeyboardButton(text="📜 قوانین", callback_data="rules", style=ButtonStyle.PRIMARY),
+        _btn("💬  پشتیبانی", "support", ButtonStyle.PRIMARY),
+        _btn("⭐  نظرات", "reviews", ButtonStyle.PRIMARY),
+    )
+    b.row(
+        _btn("📜  قوانین", "rules", ButtonStyle.PRIMARY),
+        _btn("ℹ️  درباره ربات", "about", ButtonStyle.PRIMARY),
     )
     if is_admin_user:
-        b.row(InlineKeyboardButton(text="🛠 پنل ادمین", callback_data="admin_panel", style=ButtonStyle.DANGER))
+        b.row(_btn("🛠  پنل مدیریت", "admin_panel", ButtonStyle.DANGER))
     return b.as_markup()
 
 def admin_menu() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
-        InlineKeyboardButton(text="📊 آمار", callback_data="admin_stats", style=ButtonStyle.PRIMARY),
-        InlineKeyboardButton(text="💰 سفارش‌ها", callback_data="admin_orders", style=ButtonStyle.SUCCESS),
+        _btn("📊  آمار کلی", "admin_stats", ButtonStyle.PRIMARY),
+        _btn("👥  کاربران", "admin_users", ButtonStyle.PRIMARY),
     )
     b.row(
-        InlineKeyboardButton(text="🖥 پنل‌ها", callback_data="admin_panels", style=ButtonStyle.PRIMARY),
-        InlineKeyboardButton(text="📢 همگانی", callback_data="admin_broadcast", style=ButtonStyle.DANGER),
+        _btn("🛍  محصولات", "admin_products", ButtonStyle.SUCCESS),
+        _btn("📦  انبار", "admin_stock", ButtonStyle.SUCCESS),
     )
     b.row(
-        InlineKeyboardButton(text="💾 بک‌آپ", callback_data="admin_backup", style=ButtonStyle.SUCCESS),
-        InlineKeyboardButton(text="⚙️ تنظیمات", callback_data="admin_settings", style=ButtonStyle.PRIMARY),
+        _btn("💰  سفارش‌ها", "admin_orders", ButtonStyle.SUCCESS),
+        _btn("💳  پرداخت", "admin_payment", ButtonStyle.PRIMARY),
     )
-    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_main", style=ButtonStyle.PRIMARY))
+    b.row(
+        _btn("🖥  پنل‌ها", "admin_panels", ButtonStyle.PRIMARY),
+        _btn("🔒  عضویت اجباری", "admin_forcejoin", ButtonStyle.PRIMARY),
+    )
+    b.row(
+        _btn("📢  پیام همگانی", "admin_broadcast", ButtonStyle.DANGER),
+        _btn("🚫  مسدودسازی", "admin_ban", ButtonStyle.DANGER),
+    )
+    b.row(
+        _btn("💾  بک‌آپ", "admin_backup", ButtonStyle.SUCCESS),
+        _btn("📥  بازیابی", "admin_restore", ButtonStyle.DANGER),
+    )
+    b.row(
+        _btn("⚙️  تنظیمات", "admin_settings", ButtonStyle.PRIMARY),
+        _btn("📝  ویرایش قوانین", "admin_edit_rules", ButtonStyle.PRIMARY),
+    )
+    b.row(_btn("🔙  بازگشت به منو", "back_main", ButtonStyle.PRIMARY))
     return b.as_markup()
 
 def confirm_rules() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="✅ پذیرش قوانین و ادامه", callback_data="accept_rules", style=ButtonStyle.SUCCESS))
+    b.row(_btn("✅  پذیرش قوانین و ادامه", "accept_rules", ButtonStyle.SUCCESS))
     return b.as_markup()
 
 def products_keyboard(products: list) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for p in products:
         price = f"{int(p.price):,}".replace(",", "٬")
-        text = f"{'🧪 ' if p.is_test else '📦 '}{p.name} — {price} تومان"
-        b.row(InlineKeyboardButton(text=text, callback_data=f"product_{p.id}",
-                                   style=ButtonStyle.SUCCESS if not p.is_test else ButtonStyle.PRIMARY))
-    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_main", style=ButtonStyle.PRIMARY))
+        stock_txt = "نامحدود" if getattr(p, "stock", -1) < 0 else f"{p.stock} عدد"
+        text = f"{'🧪' if p.is_test else '📦'} {p.name} | {price} | {stock_txt}"
+        b.row(_btn(text, f"product_{p.id}", ButtonStyle.SUCCESS if not p.is_test else ButtonStyle.PRIMARY))
+    b.row(_btn("🔙  بازگشت", "back_main", ButtonStyle.PRIMARY))
     return b.as_markup()
 
 def payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="📤 ارسال رسید پرداخت", callback_data=f"send_receipt_{order_id}", style=ButtonStyle.SUCCESS))
-    b.row(InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_order", style=ButtonStyle.DANGER))
+    b.row(_btn("📤  ارسال رسید پرداخت", f"send_receipt_{order_id}", ButtonStyle.SUCCESS))
+    b.row(_btn("💰  پرداخت از کیف پول", f"pay_wallet_{order_id}", ButtonStyle.PRIMARY))
+    b.row(_btn("❌  انصراف از خرید", "cancel_order", ButtonStyle.DANGER))
     return b.as_markup()
 
 def admin_order_actions(order_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
-        InlineKeyboardButton(text="✅ تایید و ارسال کانفیگ", callback_data=f"approve_order_{order_id}", style=ButtonStyle.SUCCESS),
-        InlineKeyboardButton(text="❌ رد", callback_data=f"reject_order_{order_id}", style=ButtonStyle.DANGER),
+        _btn("✅  تایید و ارسال", f"approve_order_{order_id}", ButtonStyle.SUCCESS),
+        _btn("❌  رد سفارش", f"reject_order_{order_id}", ButtonStyle.DANGER),
     )
     return b.as_markup()
 
 def back_button(cb: str = "back_main") -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data=cb, style=ButtonStyle.PRIMARY))
+    b.row(_btn("🔙  بازگشت", cb, ButtonStyle.PRIMARY))
+    return b.as_markup()
+
+def admin_products_menu() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.row(_btn("➕  افزودن محصول", "admin_add_product", ButtonStyle.SUCCESS))
+    b.row(_btn("📋  لیست محصولات", "admin_list_products", ButtonStyle.PRIMARY))
+    b.row(_btn("🔙  بازگشت", "admin_panel", ButtonStyle.PRIMARY))
+    return b.as_markup()
+
+def yes_no(yes_data: str, no_data: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.row(
+        _btn("✅  بله", yes_data, ButtonStyle.SUCCESS),
+        _btn("❌  خیر", no_data, ButtonStyle.DANGER),
+    )
     return b.as_markup()
 
 # ============================================================
@@ -461,6 +553,21 @@ class SupportStates(StatesGroup):
 
 class AdminStates(StatesGroup):
     broadcast = State()
+    add_product_name = State()
+    add_product_price = State()
+    add_product_days = State()
+    add_product_gb = State()
+    add_product_stock = State()
+    edit_rules = State()
+    ban_user = State()
+    unban_user = State()
+    wallet_user = State()
+    wallet_amount = State()
+    set_card_number = State()
+    set_card_owner = State()
+    restore_file = State()
+    add_force_channel = State()
+    set_welcome = State()
 
 async def check_force_join(user_id: int, bot: Bot) -> tuple[bool, list]:
     async with AsyncSessionLocal() as session:
@@ -492,6 +599,9 @@ async def cmd_start(message: Message, bot: Bot):
             )
             session.add(user)
             await session.commit()
+        elif user.is_banned:
+            await message.answer("🚫 حساب شما مسدود شده است.")
+            return
     ok, missing = await check_force_join(user_id, bot)
     if not ok:
         text = "🔒 برای استفاده باید در کانال‌های زیر عضو شوید:\n\n"
@@ -578,12 +688,36 @@ async def select_product(callback: CallbackQuery, state: FSMContext):
             return
         card = await get_setting("card_number")
         owner = await get_setting("card_owner")
+        # stock check
+        if getattr(product, "stock", -1) == 0:
+            await callback.answer("موجودی این محصول تمام شده", show_alert=True)
+            return
         text = (
-            f"🛒 سفارش ثبت شد\n\n📦 {product.name}\n💰 {format_price(product.price)}\n"
-            f"🆔 `{order.id}`\n\n💳 کارت: `{card}`\nبه نام: {owner}\n\n"
-            "بعد از واریز رسید را ارسال کنید."
+            f"🛒 سفارش ثبت شد\n\n"
+            f"📦 محصول: {product.name}\n"
+            f"💰 مبلغ: {format_price(product.price)}\n"
+            f"🆔 کد سفارش: `{order.id}`\n\n"
+            f"💳 شماره کارت:\n`{card or 'تنظیم نشده'}`\n"
+            f"👤 به نام: {owner or '—'}\n\n"
+            "بعد از واریز، رسید را ارسال کنید یا از کیف پول پرداخت کنید."
         )
-        await callback.message.edit_text(text, reply_markup=payment_keyboard(order.id))
+        # Send professional card image first
+        try:
+            if card:
+                buf = generate_card_image(card, owner or "")
+                from aiogram.types import BufferedInputFile
+                photo = BufferedInputFile(buf.read(), filename="card.png")
+                await callback.message.delete()
+                await callback.message.answer_photo(
+                    photo,
+                    caption=text,
+                    reply_markup=payment_keyboard(order.id),
+                )
+            else:
+                await callback.message.edit_text(text, reply_markup=payment_keyboard(order.id))
+        except Exception as e:
+            logger.warning("Card image failed: %s", e)
+            await callback.message.edit_text(text, reply_markup=payment_keyboard(order.id))
         await state.set_state(OrderStates.waiting_receipt)
         await state.update_data(order_id=order.id)
     await callback.answer()
@@ -683,6 +817,63 @@ async def reviews(callback: CallbackQuery):
     await callback.answer()
 
 # Admin handlers
+
+@router.callback_query(F.data == "wallet")
+async def wallet_view(callback: CallbackQuery):
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        bal = user.balance if user else 0
+    text = (
+        f"💰 کیف پول شما\n\n"
+        f"موجودی: <b>{format_price(bal)}</b>\n\n"
+        f"برای شارژ کیف پول با پشتیبانی در ارتباط باشید یا از ادمین درخواست کنید."
+    )
+    await callback.message.edit_text(text, reply_markup=back_button())
+    await callback.answer()
+
+@router.callback_query(F.data == "about")
+async def about_bot(callback: CallbackQuery):
+    text = (
+        f"⚡ <b>PX Bot v{settings.VERSION}</b>\n\n"
+        f"ربات حرفه‌ای فروش کانفیگ\n"
+        f"⏱ آپتایم: {get_uptime()}\n\n"
+        f"پشتیبانی از پنل‌های پاسارگارد · مرزبان · سنایی"
+    )
+    await callback.message.edit_text(text, reply_markup=back_button())
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("pay_wallet_"))
+async def pay_from_wallet(callback: CallbackQuery, bot: Bot):
+    order_id = int(callback.data.split("_")[2])
+    async with AsyncSessionLocal() as session:
+        order = await session.get(Order, order_id)
+        if not order or order.status not in ("waiting_receipt", "pending"):
+            await callback.answer("سفارش معتبر نیست", show_alert=True)
+            return
+        user = await session.get(User, order.user_id)
+        if user.balance < order.amount:
+            await callback.answer("موجودی کیف پول کافی نیست", show_alert=True)
+            return
+        user.balance -= order.amount
+        order.status = "pending"
+        order.receipt_file_id = "WALLET"
+        await session.commit()
+        product = await session.get(Product, order.product_id)
+    await callback.message.edit_text(
+        f"✅ پرداخت از کیف پول انجام شد.\nکد سفارش: `{order_id}`\nمنتظر تایید ادمین باشید.",
+        reply_markup=main_menu(is_admin(callback.from_user.id)),
+    )
+    for aid in settings.admin_ids_list:
+        try:
+            await bot.send_message(
+                aid,
+                f"💰 پرداخت کیف پول\nکاربر: {user.full_name}\nمبلغ: {format_price(order.amount)}\nسفارش: `{order_id}`",
+                reply_markup=admin_order_actions(order_id),
+            )
+        except Exception:
+            pass
+    await callback.answer()
+
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -743,6 +934,9 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
         order.approved_at = datetime.utcnow()
         if product.duration_days > 0:
             order.expires_at = datetime.utcnow() + timedelta(days=product.duration_days)
+        # decrease stock
+        if getattr(product, "stock", -1) is not None and product.stock > 0:
+            product.stock = max(0, product.stock - 1)
         await session.commit()
     try:
         await bot.send_message(
@@ -845,6 +1039,318 @@ async def admin_orders(callback: CallbackQuery):
     text = "💰 در انتظار:\n\n" + ("\n".join(f"#{o.id} — {format_price(o.amount)} — {o.status}" for o in orders) if orders else "موردی نیست.")
     await callback.message.edit_text(text, reply_markup=back_button("admin_panel"))
     await callback.answer()
+
+
+# ---- Extra Admin Features (v2) ----
+
+@router.callback_query(F.data == "admin_products")
+async def admin_products(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text("🛍 مدیریت محصولات", reply_markup=admin_products_menu())
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_list_products")
+async def admin_list_products(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    async with AsyncSessionLocal() as session:
+        products = (await session.execute(select(Product).order_by(Product.sort_order))).scalars().all()
+    if not products:
+        text = "محصولی ثبت نشده."
+    else:
+        text = "📋 لیست محصولات:\n\n"
+        for p in products:
+            st = "∞" if getattr(p, "stock", -1) < 0 else str(p.stock)
+            text += f"{'✅' if p.is_active else '❌'} #{p.id} {p.name}\n💰 {format_price(p.price)} | انبار: {st}\n\n"
+    await callback.message.edit_text(text, reply_markup=admin_products_menu())
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_add_product")
+async def admin_add_product_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text("نام محصول را وارد کنید:", reply_markup=back_button("admin_products"))
+    await state.set_state(AdminStates.add_product_name)
+    await callback.answer()
+
+@router.message(AdminStates.add_product_name)
+async def admin_add_product_name(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.update_data(name=message.text.strip())
+    await message.answer("قیمت را به تومان وارد کنید (عدد):")
+    await state.set_state(AdminStates.add_product_price)
+
+@router.message(AdminStates.add_product_price)
+async def admin_add_product_price(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        price = float(message.text.replace(",", "").replace("٬", "").strip())
+    except ValueError:
+        await message.answer("عدد معتبر وارد کنید:")
+        return
+    await state.update_data(price=price)
+    await message.answer("مدت اعتبار (روز) — ۰ یعنی نامحدود:")
+    await state.set_state(AdminStates.add_product_days)
+
+@router.message(AdminStates.add_product_days)
+async def admin_add_product_days(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        days = int(message.text.strip())
+    except ValueError:
+        await message.answer("عدد معتبر وارد کنید:")
+        return
+    await state.update_data(days=days)
+    await message.answer("حجم به گیگابایت — ۰ یعنی نامحدود:")
+    await state.set_state(AdminStates.add_product_gb)
+
+@router.message(AdminStates.add_product_gb)
+async def admin_add_product_gb(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        gb = float(message.text.strip())
+    except ValueError:
+        await message.answer("عدد معتبر وارد کنید:")
+        return
+    await state.update_data(gb=gb)
+    await message.answer("موجودی انبار — عدد وارد کنید یا -1 برای نامحدود:")
+    await state.set_state(AdminStates.add_product_stock)
+
+@router.message(AdminStates.add_product_stock)
+async def admin_add_product_stock(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        stock = int(message.text.strip())
+    except ValueError:
+        await message.answer("عدد معتبر وارد کنید:")
+        return
+    data = await state.get_data()
+    async with AsyncSessionLocal() as session:
+        p = Product(
+            name=data["name"], price=data["price"], duration_days=data["days"],
+            data_limit_gb=data["gb"], stock=stock, is_active=True,
+        )
+        session.add(p)
+        await session.commit()
+    await message.answer(
+        f"✅ محصول «{data['name']}» اضافه شد.\n💰 {format_price(data['price'])}\n📦 انبار: {'نامحدود' if stock < 0 else stock}",
+        reply_markup=admin_menu(),
+    )
+    await state.clear()
+
+@router.callback_query(F.data == "admin_stock")
+async def admin_stock(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    async with AsyncSessionLocal() as session:
+        products = (await session.execute(select(Product).order_by(Product.sort_order))).scalars().all()
+    text = "📦 وضعیت انبار:\n\n"
+    for p in products:
+        st = "∞ نامحدود" if getattr(p, "stock", -1) < 0 else f"{p.stock} عدد"
+        flag = "🟢" if (getattr(p, "stock", -1) < 0 or p.stock > 5) else ("🟡" if p.stock > 0 else "🔴")
+        text += f"{flag} {p.name}: {st}\n"
+    if not products:
+        text += "محصولی نیست."
+    await callback.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_ban")
+async def admin_ban_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text(
+        "🚫 آیدی عددی کاربر برای مسدودسازی را بفرستید:\n(برای رفع مسدودیت /unban را بزنید)",
+        reply_markup=back_button("admin_panel"),
+    )
+    await state.set_state(AdminStates.ban_user)
+    await callback.answer()
+
+@router.message(AdminStates.ban_user)
+async def admin_ban_user(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        tid = int(message.text.strip())
+    except ValueError:
+        await message.answer("آیدی عددی معتبر بفرستید:")
+        return
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == tid))
+        if not user:
+            user = User(telegram_id=tid, full_name="Unknown", is_banned=True)
+            session.add(user)
+        else:
+            user.is_banned = True
+        await session.commit()
+    await message.answer(f"🚫 کاربر `{tid}` مسدود شد.", reply_markup=admin_menu())
+    await state.clear()
+
+@router.message(F.text == "/unban")
+async def unban_cmd(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer("آیدی عددی کاربر برای رفع مسدودیت را بفرستید:")
+    await state.set_state(AdminStates.unban_user)
+
+@router.message(AdminStates.unban_user)
+async def admin_unban_user(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        tid = int(message.text.strip())
+    except ValueError:
+        await message.answer("آیدی عددی معتبر:")
+        return
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == tid))
+        if user:
+            user.is_banned = False
+            await session.commit()
+            await message.answer(f"✅ مسدودیت `{tid}` برداشته شد.", reply_markup=admin_menu())
+        else:
+            await message.answer("کاربر یافت نشد.", reply_markup=admin_menu())
+    await state.clear()
+
+@router.callback_query(F.data == "admin_edit_rules")
+async def admin_edit_rules(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    current = await get_setting("rules")
+    await callback.message.edit_text(
+        f"📝 قوانین فعلی:\n\n{current[:800]}\n\n———\nمتن جدید قوانین را ارسال کنید:",
+        reply_markup=back_button("admin_panel"),
+    )
+    await state.set_state(AdminStates.edit_rules)
+    await callback.answer()
+
+@router.message(AdminStates.edit_rules)
+async def admin_save_rules(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await set_setting("rules", message.text)
+    await message.answer("✅ قوانین به‌روزرسانی شد.", reply_markup=admin_menu())
+    await state.clear()
+
+@router.callback_query(F.data == "admin_payment")
+async def admin_payment_menu(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    card = await get_setting("card_number")
+    owner = await get_setting("card_owner")
+    text = f"💳 تنظیمات پرداخت\n\nکارت: `{card or '—'}`\nصاحب: {owner or '—'}\n\nشماره کارت جدید را بفرستید (یا /skip):"
+    await callback.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await state.set_state(AdminStates.set_card_number)
+    await callback.answer()
+
+@router.message(AdminStates.set_card_number)
+async def admin_set_card(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    if message.text.strip() != "/skip":
+        await set_setting("card_number", message.text.strip())
+    await message.answer("نام صاحب کارت را بفرستید:")
+    await state.set_state(AdminStates.set_card_owner)
+
+@router.message(AdminStates.set_card_owner)
+async def admin_set_owner(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await set_setting("card_owner", message.text.strip())
+    card = await get_setting("card_number")
+    owner = await get_setting("card_owner")
+    await message.answer(f"✅ ذخیره شد\n💳 `{card}`\n👤 {owner}", reply_markup=admin_menu())
+    await state.clear()
+
+@router.callback_query(F.data == "admin_restore")
+async def admin_restore_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.message.edit_text(
+        "📥 فایل بک‌آپ (zip) را ارسال کنید تا بازیابی شود.\n⚠️ دیتابیس فعلی جایگزین می‌شود.",
+        reply_markup=back_button("admin_panel"),
+    )
+    await state.set_state(AdminStates.restore_file)
+    await callback.answer()
+
+@router.message(AdminStates.restore_file, F.document)
+async def admin_restore_file(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    file = await message.bot.get_file(message.document.file_id)
+    dest = BACKUP_DIR / (message.document.file_name or "restore.zip")
+    await message.bot.download_file(file.file_path, dest)
+    ok = restore_backup(dest)
+    if ok:
+        await message.answer("✅ بازیابی موفق بود.\nبرای اعمال کامل یک‌بار ربات را Restart کنید.", reply_markup=admin_menu())
+    else:
+        await message.answer("❌ بازیابی ناموفق. فایل را بررسی کنید.", reply_markup=admin_menu())
+    await state.clear()
+
+@router.callback_query(F.data == "admin_users")
+async def admin_users_list(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    async with AsyncSessionLocal() as session:
+        total = await session.scalar(select(func.count(User.id))) or 0
+        banned = await session.scalar(select(func.count(User.id)).where(User.is_banned == True)) or 0
+        recent = (await session.execute(select(User).order_by(desc(User.created_at)).limit(8))).scalars().all()
+    text = f"👥 کاربران: {total} | 🚫 مسدود: {banned}\n\nآخرین‌ها:\n"
+    for u in recent:
+        flag = "🚫" if u.is_banned else "•"
+        text += f"{flag} {u.full_name or '—'} (`{u.telegram_id}`) | 💰 {format_price(u.balance)}\n"
+    text += "\nبرای شارژ کیف پول: /wallet\nبرای مسدود: از منوی مسدودسازی"
+    await callback.message.edit_text(text, reply_markup=back_button("admin_panel"))
+    await callback.answer()
+
+@router.message(F.text == "/wallet")
+async def wallet_admin_cmd(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer("آیدی عددی کاربر برای شارژ/کم کردن کیف پول:")
+    await state.set_state(AdminStates.wallet_user)
+
+@router.message(AdminStates.wallet_user)
+async def wallet_admin_user(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        tid = int(message.text.strip())
+    except ValueError:
+        await message.answer("آیدی عددی:")
+        return
+    await state.update_data(wallet_tid=tid)
+    await message.answer("مبلغ را وارد کنید (مثبت=شارژ، منفی=کسر):")
+    await state.set_state(AdminStates.wallet_amount)
+
+@router.message(AdminStates.wallet_amount)
+async def wallet_admin_amount(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        amount = float(message.text.replace(",", "").strip())
+    except ValueError:
+        await message.answer("عدد معتبر:")
+        return
+    data = await state.get_data()
+    tid = data["wallet_tid"]
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == tid))
+        if not user:
+            await message.answer("کاربر یافت نشد.", reply_markup=admin_menu())
+            await state.clear()
+            return
+        user.balance = (user.balance or 0) + amount
+        await session.commit()
+        new_bal = user.balance
+    await message.answer(f"✅ موجودی کاربر `{tid}`: {format_price(new_bal)}", reply_markup=admin_menu())
+    await state.clear()
+
 
 # ============================================================
 # WEB PANEL (FastAPI) - No Shadow CSS
